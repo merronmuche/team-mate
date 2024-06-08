@@ -2,7 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+.vscode
+node_modules
+data
 *.log.*
 src/optik/django_app/media/
 *sa.json
