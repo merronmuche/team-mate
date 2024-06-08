@@ -1,22 +1,40 @@
+import asyncio
 import os
-import fitz  # PyMuPDF
-import weaviate
 import uuid
 from typing import List
+import fitz  # PyMuPDF
 from dotenv import load_dotenv
-from weaviate.weaviate_client import WeaviateClient
 
+import weaviate
+from weaviate.weaviate_interface import WeaviateInterface
 
 weaviate_interface = weaviate.setup_weaviate_interface()
 
-
+# Load environment variables
 load_dotenv()
-
-# Weaviate client configuration
 client = weaviate_interface.client
 
-# Function to read and extract text from PDF
-def extract_text_from_pdf(pdf_path: str) -> str:
+WEAVIATE_URL = os.getenv("WEAVIATE_URL")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+SCHEMA_FILE = "/home/meron/Documents/work/tenacious/team-mate/weaviate/schema.json"
+PDF_DIRECTORY = "/home/meron/Documents/work/tenacious/team-mate/data"
+
+
+# Function to set up the Weaviate client interface asynchronously
+async def setup_weaviate_client():
+    """
+    Asynchronous function to set up the Weaviate interface.
+    """
+    interface = WeaviateInterface(WEAVIATE_URL, OPENAI_API_KEY, SCHEMA_FILE)
+    await interface.async_init()  # Initialize the interface asynchronously
+    return interface.client
+
+
+# Function to extract text from a PDF file asynchronously
+async def extract_text_from_pdf(pdf_path: str) -> str:
+    """
+    Extracts text from a PDF file.
+    """
     doc = fitz.open(pdf_path)
     text = ""
     for page_num in range(doc.page_count):
@@ -24,44 +42,76 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         text += page.get_text()
     return text
 
+
 # Function to chunk text into smaller parts
 def chunk_text(text: str, chunk_size: int = 500) -> List[str]:
+    """
+    Chunks text into smaller parts.
+    """
     words = text.split()
-    chunks = [' '.join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+    chunks = [
+        " ".join(words[i : i + chunk_size]) for i in range(0, len(words), chunk_size)
+    ]
     return chunks
 
-# Function to add documents and chunks to Weaviate
-def add_document_chunks_to_weaviate(pdf_path: str):
-    document_text = extract_text_from_pdf(pdf_path)
+
+# Function to add a document and its chunks to Weaviate
+async def add_document_chunks_to_weaviate(client, pdf_path: str):
+    """
+    Adds a document and its chunks to Weaviate.
+
+    Args:
+        client (weaviate.Client): The Weaviate client object.
+        pdf_path (str): The path to the PDF file.
+    """
+    document_text = await extract_text_from_pdf(pdf_path)
     chunks = chunk_text(document_text)
     document_id = str(uuid.uuid4())
 
-    # Create Document object
-    client.create_object(
-        data={"title": os.path.basename(pdf_path), "content": document_text, "wordCount": len(document_text.split()), "url": pdf_path},
+    # Create Document object using the Weaviate client
+    await client.create_object(
+        data={
+            "title": os.path.basename(pdf_path),
+            "content": document_text,
+            "wordCount": len(document_text.split()),
+            "url": pdf_path,
+        },
         class_name="Document",
-        # uuid=document_id
     )
 
-    # Create DocumentChunk objects
+    chunk_ids = []
+    # Create DocumentChunk objects for each chunk
     for i, chunk in enumerate(chunks):
         chunk_id = str(uuid.uuid4())
         client.create_object(
-            data={"document": {"beacon": f"weaviate://localhost/Document/{document_id}"}, "text": chunk, "doc_name": os.path.basename(pdf_path)},
+            data={
+                "document": {"beacon": f"weaviate://localhost/Document/{document_id}"},
+                "text": chunk,
+                "doc_name": os.path.basename(pdf_path),
+            },
             class_name="DocumentChunk",
-            # uuid=chunk_id
         )
+        chunk_ids.append(chunk_id)
 
-# Directory containing PDF files
-pdf_directory = "/home/meron/Documents/work/tenacious/team-mate/data"
+    return document_id, chunk_ids
 
-# Loop through all PDFs in the directory and process them
-for filename in os.listdir(pdf_directory):
-    if filename.endswith(".pdf"):
-        pdf_path = os.path.join(pdf_directory, filename)
-        add_document_chunks_to_weaviate(pdf_path)
-        print(f"Processed {filename}")
-        
 
-print("All documents have been processed and added to Weaviate.")
+# The main function that processes all PDF files in the directory
+async def main():
+    """
+    The main function that processes all PDF files in the directory.
+    """
+    client = await setup_weaviate_client()  # Get the Weaviate client
 
+    # Loop through all PDFs in the directory and process them
+    for filename in os.listdir(PDF_DIRECTORY):
+        if filename.endswith(".pdf"):
+            pdf_path = os.path.join(PDF_DIRECTORY, filename)
+            document_id, chunk_ids = await add_document_chunks_to_weaviate(
+                client, pdf_path
+            )
+            print(f"Processed {filename} with document ID {document_id}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
