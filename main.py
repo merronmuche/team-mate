@@ -3,6 +3,17 @@ import socketio
 from fastapi import FastAPI
 from typing import Dict, List
 from weaviate import setup_weaviate_interface
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
+
+
+# instantiate the chatgpt llm model
+
+load_dotenv()
+
+chat = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.2)
+
 
 # Fast API application
 app = FastAPI()
@@ -54,6 +65,13 @@ async def handle_session_init(sid, data):
 @sio.on("textMessage")
 async def handle_chat_message(sid, data):
     print(f"Message from {sid}: {data}")
+    user_message = data['message']
+    # Implement the GPT-3.5 Turbo API call to generate a response
+    response = chat.invoke(
+            [
+                HumanMessage(content=user_message),
+            ]
+        ).content
     session_id = data.get("sessionId")
     if session_id:
         if session_id not in sessions:
@@ -67,7 +85,7 @@ async def handle_chat_message(sid, data):
         sessions[session_id].append(received_message)
         response_message = {
             "id": data.get("id") + "_response",
-            "textResponse": data.get("message"),
+            "textResponse": response,
             "isUserMessage": False,
             "timestamp": data.get("timestamp"),
             "isComplete": True,
