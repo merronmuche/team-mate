@@ -4,6 +4,8 @@ import uuid
 from typing import List
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
+import openai
+import pandas as pd
 
 import weaviate
 from weaviate.weaviate_interface import WeaviateInterface
@@ -55,7 +57,6 @@ def chunk_text(text: str, chunk_size: int = 500) -> List[str]:
     return chunks
 
 
-# Function to add a document and its chunks to Weaviate
 async def add_document_chunks_to_weaviate(client, pdf_path: str):
     """
     Adds a document and its chunks to Weaviate.
@@ -66,31 +67,34 @@ async def add_document_chunks_to_weaviate(client, pdf_path: str):
     """
     document_text = await extract_text_from_pdf(pdf_path)
     chunks = chunk_text(document_text)
-    document_id = str(uuid.uuid4())
+    # document_id = str(uuid.uuid4())
 
     # Create Document object using the Weaviate client
-    await client.create_object(
+    document_id = await client.create_object(
         data={
             "title": os.path.basename(pdf_path),
             "content": document_text,
             "wordCount": len(document_text.split()),
             "url": pdf_path,
         },
-        class_name="Document",
+        class_name="Document"
     )
 
+    beacon = f"weaviate://localhost/Document/{document_id}"
     chunk_ids = []
     # Create DocumentChunk objects for each chunk
     for i, chunk in enumerate(chunks):
-        chunk_id = str(uuid.uuid4())
-        client.create_object(
+        # chunk_id = str(uuid.uuid4())
+        chunk_id = await client.create_object(
             data={
-                "document": {"beacon": f"weaviate://localhost/Document/{document_id}"},
+                "document": [{"beacon": beacon}],
                 "text": chunk,
                 "doc_name": os.path.basename(pdf_path),
+                # "embedding": chunk_embedding,
             },
-            class_name="DocumentChunk",
+            class_name="DocumentChunk"
         )
+        
         chunk_ids.append(chunk_id)
 
     return document_id, chunk_ids
@@ -103,6 +107,8 @@ async def main():
     """
     client = await setup_weaviate_client()  # Get the Weaviate client
 
+    processed_documents = []
+
     # Loop through all PDFs in the directory and process them
     for filename in os.listdir(PDF_DIRECTORY):
         if filename.endswith(".pdf"):
@@ -110,7 +116,17 @@ async def main():
             document_id, chunk_ids = await add_document_chunks_to_weaviate(
                 client, pdf_path
             )
+            processed_documents.append({
+                "filename": filename,
+                "document_id": document_id,
+                "chunk_ids": chunk_ids
+            })
             print(f"Processed {filename} with document ID {document_id}")
+
+    # Display processed documents in a table
+    df = pd.DataFrame(processed_documents)
+    print(df)
+
 
 
 if __name__ == "__main__":
